@@ -5,14 +5,15 @@ import multiprocessing as mp
 from collections import deque
 import cv2
 import torch
-
+from pkg_resources import resource_filename
 from detectron2.data import MetadataCatalog
 from detectron2.engine.defaults import DefaultPredictor
 from detectron2.utils.video_visualizer import VideoVisualizer
 from detectron2.utils.visualizer import ColorMode, Visualizer
 
 from .modeling.utils import reset_cls_test
-
+import os
+detic_path = resource_filename('lfovision', 'Detic')
 
 def get_clip_embeddings(vocabulary, prompt='a '):
     from detic.modeling.text.text_encoder import build_text_encoder
@@ -23,10 +24,10 @@ def get_clip_embeddings(vocabulary, prompt='a '):
     return emb
 
 BUILDIN_CLASSIFIER = {
-    'lvis': 'datasets/metadata/lvis_v1_clip_a+cname.npy',
-    'objects365': 'datasets/metadata/o365_clip_a+cnamefix.npy',
-    'openimages': 'datasets/metadata/oid_clip_a+cname.npy',
-    'coco': 'datasets/metadata/coco_clip_a+cname.npy',
+    'lvis': os.path.join(detic_path, 'datasets/metadata/lvis_v1_clip_a+cname.npy'),
+    'objects365': os.path.join(detic_path, 'datasets/metadata/o365_clip_a+cnamefix.npy'),
+    'openimages': os.path.join(detic_path, 'datasets/metadata/oid_clip_a+cname.npy'),
+    'coco': os.path.join(detic_path, 'datasets/metadata/coco_clip_a+cname.npy'),
 }
 
 BUILDIN_METADATA_PATH = {
@@ -98,6 +99,15 @@ class VisualizationDemo(object):
 
         return predictions, vis_output
 
+    def run_on_image_simple(self, image):
+        """
+        Args:
+            image (np.ndarray): an image of shape (H, W, C) (in BGR order).
+                This is the format used by OpenCV.
+        """
+        predictions = self.predictor(image)
+        return predictions, None
+
     def _frame_from_video(self, video):
         while video.isOpened():
             success, frame = video.read()
@@ -105,6 +115,25 @@ class VisualizationDemo(object):
                 yield frame
             else:
                 break
+
+
+    def run_on_images_simple(self, images):
+        results = []
+        batch_size = 3
+        import tqdm
+        with torch.no_grad():
+            for i in tqdm.tqdm(range(0, len(images), batch_size)):
+                img_batch = images[i:i+batch_size]
+                inp_lst = []
+                for img in img_batch:
+                    height, width = img.shape[:2]
+                    image = self.predictor.aug.get_transform(img).apply_image(img)
+                    image = torch.as_tensor(image.astype("float32").transpose(2, 0, 1))
+                    inputs = {"image": image, "height": height, "width": width}
+                    inp_lst.append(inputs)
+                results.extend(self.predictor.model(inp_lst))
+                torch.cuda.empty_cache()
+        return results
 
     def run_on_video(self, video):
         """
